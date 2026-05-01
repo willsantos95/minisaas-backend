@@ -37,7 +37,42 @@ function normalizePairingCode(data) {
   );
 }
 
+function normalizeGroupsResponse(groupsData) {
+  if (Array.isArray(groupsData)) return groupsData;
+
+  if (Array.isArray(groupsData?.groups)) return groupsData.groups;
+  if (Array.isArray(groupsData?.data)) return groupsData.data;
+  if (Array.isArray(groupsData?.response)) return groupsData.response;
+
+  return [];
+}
+
+function getGroupJid(group) {
+  return (
+    group?.id ||
+    group?.jid ||
+    group?.groupJid ||
+    group?.remoteJid ||
+    group?.key?.remoteJid ||
+    null
+  );
+}
+
+function getGroupName(group) {
+  return (
+    group?.subject ||
+    group?.name ||
+    group?.groupName ||
+    group?.pushName ||
+    "Grupo sem nome"
+  );
+}
+
 async function evolutionFetch(path, options = {}) {
+  if (!EVOLUTION_API_URL || !EVOLUTION_API_KEY) {
+    throw new Error("Evolution API não configurada no servidor.");
+  }
+
   const response = await fetch(`${EVOLUTION_API_URL}${path}`, {
     ...options,
     headers: {
@@ -68,6 +103,25 @@ async function evolutionFetch(path, options = {}) {
   return data;
 }
 
+async function getLatestUserInstance(userId) {
+  const result = await query(
+    `
+    SELECT *
+    FROM whatsapp_instances
+    WHERE user_id = $1
+    ORDER BY created_at DESC
+    LIMIT 1
+    `,
+    [userId]
+  );
+
+  return result.rows[0];
+}
+
+/**
+ * POST /api/whatsapp/connect
+ * Body: { phone: "14999999999" }
+ */
 router.post("/connect", authRequired, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -82,20 +136,14 @@ router.post("/connect", authRequired, async (req, res) => {
       });
     }
 
-    if (!EVOLUTION_API_URL || !EVOLUTION_API_KEY) {
-      return res.status(500).json({
-        success: false,
-        message: "Evolution API não configurada no servidor.",
-      });
-    }
-
     const instanceName = buildInstanceName(userId, cleanPhone);
 
     const existing = await query(
       `
       SELECT *
       FROM whatsapp_instances
-      WHERE user_id = $1 AND phone = $2
+      WHERE user_id = $1 
+        AND phone = $2
       LIMIT 1
       `,
       [userId, cleanPhone]
@@ -169,22 +217,14 @@ router.post("/connect", authRequired, async (req, res) => {
   }
 });
 
+/**
+ * GET /api/whatsapp/status
+ */
 router.get("/status", authRequired, async (req, res) => {
   try {
     const userId = req.user.id;
 
-    const result = await query(
-      `
-      SELECT *
-      FROM whatsapp_instances
-      WHERE user_id = $1
-      ORDER BY created_at DESC
-      LIMIT 1
-      `,
-      [userId]
-    );
-
-    const instance = result.rows[0];
+    const instance = await getLatestUserInstance(userId);
 
     if (!instance) {
       return res.json({
@@ -240,6 +280,231 @@ router.get("/status", authRequired, async (req, res) => {
     return res.status(500).json({
       success: false,
       message: error.message || "Erro ao consultar status do WhatsApp.",
+    });
+  }
+});
+
+/**
+ * GET /api/whatsapp/groups
+ * Lista os grupos da instância conectada na Evolution
+ */
+router.get("/groups", authRequired, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const instance = await getLatestUserInstance(userId);
+
+    if (!instance) {
+      return res.status(404).json({
+        success: false,
+        message: "Nenhuma instância de WhatsApp encontrada para este usuário.",
+      });
+    }
+
+    const groupsData = await evolutionFetch(
+      `/group/fetchAllGroups/${instance.instance_name}?getParticipants=false`,
+      {
+        method: "GET",
+      }
+    );
+
+    const savedGroupsResult = await query(
+      `
+      SELECT group_jid, role, niche, status
+      FROM user_whatsapp_groups
+      WHERE user_id = $1
+        AND instance_name = $2
+        AND status = 'active'
+      `,
+      [userId, instance.instance_name]
+    );
+
+    const savedGroups = savedGroupsResult.rows;
+    const evolutionGroups = normalizeGroupsResponse(groupsData);
+
+    const groups = evolutionGroups
+      .map((group) => {
+        const groupJid = getGroupJid(group);
+        const groupName = getGroupName(group);
+
+        if (!groupJid) return null;
+
+        const roles = savedGroups
+          .filter((saved) => saved.group_jid === groupJid)
+          .map((saved) => saved.role);
+
+        const savedConfig = savedGroups.find(
+          (saved) => saved.group_jid === groupJid
+        );
+
+        return {
+          id: groupJid,
+          group_jid: groupJid,
+          group_name: groupName,
+          subject: group?.subject || groupName,
+          owner: group?.owner || null,
+          creation: group?.creation || null,
+          participants_count:
+            group?.participants?.length ||
+            group?.size ||
+            group?.participantsCount ||
+            null,
+          is_origin: roles.includes("origin"),
+          is_destination: roles.includes("destination"),
+          niche: savedConfig?.niche || "geral",
+          raw: group,
+        };
+      })
+      .filter(Boolean);
+
+    return res.json({
+      success: true,
+      instanceName: instance.instance_name,
+      groups,
+      raw: groupsData,
+    });
+  } catch (error) {
+    console.error("Erro ao listar grupos:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Erro ao listar grupos do WhatsApp.",
+    });
+  }
+});
+
+/**
+ * POST /api/whatsapp/groups/save
+ * Body:
+ * {
+ *   groups: [
+ *     {
+ *       group_jid: "120363423459629928@g.us",
+ *       group_name: "Nome do Grupo",
+ *       is_origin: true,
+ *       is_destination: false,
+ *       niche: "geral"
+ *     }
+ *   ]
+ * }
+ */
+router.post("/groups/save", authRequired, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { groups } = req.body;
+
+    if (!Array.isArray(groups)) {
+      return res.status(400).json({
+        success: false,
+        message: "Envie uma lista de grupos válida.",
+      });
+    }
+
+    const instance = await getLatestUserInstance(userId);
+
+    if (!instance) {
+      return res.status(404).json({
+        success: false,
+        message: "Nenhuma instância de WhatsApp encontrada.",
+      });
+    }
+
+    await query(
+      `
+      DELETE FROM user_whatsapp_groups
+      WHERE user_id = $1
+        AND instance_name = $2
+      `,
+      [userId, instance.instance_name]
+    );
+
+    for (const group of groups) {
+      const groupJid = group.group_jid || group.id;
+      const groupName = group.group_name || group.name || "Grupo sem nome";
+      const niche = group.niche || "geral";
+
+      if (!groupJid) continue;
+
+      if (group.is_origin) {
+        await query(
+          `
+          INSERT INTO user_whatsapp_groups
+            (user_id, instance_name, group_jid, group_name, role, niche, status)
+          VALUES
+            ($1, $2, $3, $4, $5, $6, 'active')
+          ON CONFLICT (user_id, group_jid, role)
+          DO UPDATE SET
+            instance_name = EXCLUDED.instance_name,
+            group_name = EXCLUDED.group_name,
+            niche = EXCLUDED.niche,
+            status = 'active',
+            updated_at = NOW()
+          `,
+          [
+            userId,
+            instance.instance_name,
+            groupJid,
+            groupName,
+            "origin",
+            niche,
+          ]
+        );
+      }
+
+      if (group.is_destination) {
+        await query(
+          `
+          INSERT INTO user_whatsapp_groups
+            (user_id, instance_name, group_jid, group_name, role, niche, status)
+          VALUES
+            ($1, $2, $3, $4, $5, $6, 'active')
+          ON CONFLICT (user_id, group_jid, role)
+          DO UPDATE SET
+            instance_name = EXCLUDED.instance_name,
+            group_name = EXCLUDED.group_name,
+            niche = EXCLUDED.niche,
+            status = 'active',
+            updated_at = NOW()
+          `,
+          [
+            userId,
+            instance.instance_name,
+            groupJid,
+            groupName,
+            "destination",
+            niche,
+          ]
+        );
+      }
+    }
+
+    const savedCountResult = await query(
+      `
+      SELECT 
+        COUNT(*) FILTER (WHERE role = 'origin') AS origins,
+        COUNT(*) FILTER (WHERE role = 'destination') AS destinations
+      FROM user_whatsapp_groups
+      WHERE user_id = $1
+        AND instance_name = $2
+        AND status = 'active'
+      `,
+      [userId, instance.instance_name]
+    );
+
+    return res.json({
+      success: true,
+      message: "Configuração dos grupos salva com sucesso.",
+      summary: {
+        origins: Number(savedCountResult.rows[0]?.origins || 0),
+        destinations: Number(savedCountResult.rows[0]?.destinations || 0),
+      },
+    });
+  } catch (error) {
+    console.error("Erro ao salvar grupos:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Erro ao salvar configuração dos grupos.",
     });
   }
 });
