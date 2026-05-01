@@ -6,8 +6,7 @@ import authRoutes from './routes/auth.routes.js';
 import settingsRoutes from './routes/settings.routes.js';
 import groupsRoutes from './routes/groups.routes.js';
 import n8nRoutes from './routes/n8n.routes.js';
-import whatsappRoutes from './routes/whatsapp.routes';
-
+import whatsappRoutes from './routes/whatsapp.routes.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
 dotenv.config();
