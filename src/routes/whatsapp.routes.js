@@ -1,7 +1,6 @@
 import express from "express";
-import pool from "../db.js";
 import authMiddleware from "../middlewares/authMiddleware.js";
-
+const pool = require("../db");
 const router = express.Router();
 
 const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL;
