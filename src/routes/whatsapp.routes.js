@@ -1,7 +1,8 @@
-const express = require("express");
+import express from "express";
+import pool from "../db.js";
+import authMiddleware from "../middlewares/authMiddleware.js";
+
 const router = express.Router();
-const pool = require("../db");
-const authMiddleware = require("../middlewares/authMiddleware");
 
 const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL;
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY;
@@ -246,5 +247,6 @@ router.get("/status", authMiddleware, async (req, res) => {
     });
   }
 });
+
 
 module.exports = router;
