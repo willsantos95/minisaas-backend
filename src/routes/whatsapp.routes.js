@@ -59,19 +59,15 @@ async function evolutionFetch(path, options = {}) {
   if (!response.ok) {
     throw new Error(
       data?.message ||
-      data?.error ||
-      data?.raw ||
-      `Erro Evolution API: ${response.status}`
+        data?.error ||
+        data?.raw ||
+        `Erro Evolution API: ${response.status}`
     );
   }
 
   return data;
 }
 
-/**
- * POST /api/whatsapp/connect
- * Body: { phone: "14999999999" }
- */
 router.post("/connect", authRequired, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -95,7 +91,7 @@ router.post("/connect", authRequired, async (req, res) => {
 
     const instanceName = buildInstanceName(userId, cleanPhone);
 
-    const existing = await pool.query(
+    const existing = await query(
       `
       SELECT *
       FROM whatsapp_instances
@@ -117,7 +113,7 @@ router.post("/connect", authRequired, async (req, res) => {
         }),
       });
 
-      const inserted = await pool.query(
+      const inserted = await query(
         `
         INSERT INTO whatsapp_instances 
           (user_id, phone, instance_name, status)
@@ -131,14 +127,17 @@ router.post("/connect", authRequired, async (req, res) => {
       instance = inserted.rows[0];
     }
 
-    const connectData = await evolutionFetch(`/instance/connect/${instanceName}`, {
-      method: "GET",
-    });
+    const connectData = await evolutionFetch(
+      `/instance/connect/${instanceName}`,
+      {
+        method: "GET",
+      }
+    );
 
     const qrcode = normalizeQrCode(connectData);
     const pairingCode = normalizePairingCode(connectData);
 
-    await pool.query(
+    await query(
       `
       UPDATE whatsapp_instances
       SET 
@@ -170,14 +169,11 @@ router.post("/connect", authRequired, async (req, res) => {
   }
 });
 
-/**
- * GET /api/whatsapp/status
- */
 router.get("/status", authRequired, async (req, res) => {
   try {
     const userId = req.user.id;
 
-    const result = await pool.query(
+    const result = await query(
       `
       SELECT *
       FROM whatsapp_instances
@@ -219,7 +215,7 @@ router.get("/status", authRequired, async (req, res) => {
 
     const connected = state === "open" || state === "connected";
 
-    await pool.query(
+    await query(
       `
       UPDATE whatsapp_instances
       SET 
@@ -248,5 +244,4 @@ router.get("/status", authRequired, async (req, res) => {
   }
 });
 
-
-module.exports = router;
+export default router;
