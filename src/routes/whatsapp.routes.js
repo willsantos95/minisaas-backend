@@ -1,5 +1,5 @@
 import express from "express";
-import authRequired from "../middlewares/auth.js";
+import authRequired from "../middleware/auth.js";
 const pool = require("../db");
 const router = express.Router();
 
@@ -71,7 +71,7 @@ async function evolutionFetch(path, options = {}) {
  * POST /api/whatsapp/connect
  * Body: { phone: "14999999999" }
  */
-router.post("/connect", authMiddleware, async (req, res) => {
+router.post("/connect", authRequired, async (req, res) => {
   try {
     const userId = req.user.id;
     const { phone } = req.body;
@@ -172,7 +172,7 @@ router.post("/connect", authMiddleware, async (req, res) => {
 /**
  * GET /api/whatsapp/status
  */
-router.get("/status", authMiddleware, async (req, res) => {
+router.get("/status", authRequired, async (req, res) => {
   try {
     const userId = req.user.id;
 
