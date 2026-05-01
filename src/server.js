@@ -6,6 +6,8 @@ import authRoutes from './routes/auth.routes.js';
 import settingsRoutes from './routes/settings.routes.js';
 import groupsRoutes from './routes/groups.routes.js';
 import n8nRoutes from './routes/n8n.routes.js';
+import whatsappRoutes from './routes/whatsapp.routes';
+
 import { errorHandler } from './middleware/errorHandler.js';
 
 dotenv.config();
@@ -28,6 +30,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/groups', groupsRoutes);
 app.use('/api/n8n', n8nRoutes);
+app.use("/api/whatsapp", whatsappRoutes);
 app.use(errorHandler);
 
 const port = process.env.PORT || 3000;
